@@ -2,3 +2,5 @@ __pycache__
 samba
 etc
 .env
+app.pyc
+mainRoutes.py
