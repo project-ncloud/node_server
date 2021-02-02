@@ -169,7 +169,7 @@ Remove host from the server
 
 @app.route('/host/', methods = ['POST', 'DELETE'])
 def hostOps():
-    if isRequiredDataAvailable(request.json, ["name", "path", "writable", "public"]) == False:
+    if isRequiredDataAvailable(request.json, ["name", "path"]) == False:
         return allowCors(jsonify({"msg":"bad request"}), 400)
 
     req = request.json
@@ -181,6 +181,9 @@ def hostOps():
 
 
     if request.method == 'POST':
+        if isRequiredDataAvailable(request.json, ["name", "path", "writable", "public"]) == False:
+            return allowCors(jsonify({"msg":"bad request"}), 400)
+
         if app.SambaManager.createNewHost(Host(data = {
             "name" : req.get('name'),
             "path" : req.get('path'),
@@ -301,12 +304,11 @@ def hostConfigOps():
     
 if __name__ == '__main__':
     #sm = SMB('./etc/samba/smb.conf')
-    load_dotenv('./.env')
-
+    load_dotenv('.env')
     SMB.addUser(os.getenv('ADMIN_USER'))
     SMB.add_SMBUser(os.getenv('ADMIN_USER'), os.getenv('ADMIN_KEY'))
 
     
-    app.run(host = '0.0.0.0', port = 5000, debug = True)
+    app.run(host = '0.0.0.0', port = 6900, debug = True)
 
     
