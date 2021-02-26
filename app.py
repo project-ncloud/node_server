@@ -1,17 +1,33 @@
 import dotenv
 import os
 import json
+import pathlib
 
-from flask          import Flask, jsonify, request
-from samba.smb      import SMB
-from serviceHandler import isAlive, wake, kill, getCurrentUser
-from middleWare     import allowCors
-from validation     import addressCorrect
-from dotenv         import load_dotenv
-from samba.utils          import isRequiredDataAvailable
-from samba.smbhost  import Host
+from flask                  import Flask, jsonify, request, send_file, send_from_directory, safe_join, abort
+from flask_cors             import CORS, cross_origin
+from samba.smb              import SMB
+from serviceHandler         import isAlive, wake, kill, getCurrentUser
+from middleWare             import allowCors
+from validation             import addressCorrect, isValidPath
+from dotenv                 import load_dotenv
+from samba.utils            import isRequiredDataAvailable
+from samba.smbhost          import Host
+from os                     import getenv, path
+from pathlib                import Path
+
+from Directories   import Directories
+
+from flask_jwt_extended import (
+    JWTManager, jwt_required, create_access_token,
+    get_jwt_identity, decode_token
+)
+
 
 app = Flask(__name__)
+
+CORS(app)
+app.config['JWT_SECRET_KEY'] = getenv('SECRET_KEY')
+jwt = JWTManager(app)
 
 app.SambaManager = SMB('/etc/samba/smb.conf')
 
@@ -119,7 +135,10 @@ Remove user from specific host
 def userOps():
     data = request.json
 
-    if isRequiredDataAvailable(data, ["username", "password", "hostname"]) == False:
+
+    is_required_data_available = isRequiredDataAvailable(data, ["username", "password", "hostname"]) if request.method == 'POST' else isRequiredDataAvailable(data, ["username", "hostname"]) 
+
+    if is_required_data_available == False:
         return allowCors(jsonify({"msg":"bad request"}), 400)
 
     username = data.get('username')
@@ -268,17 +287,98 @@ def hostConfigOps():
 
 
 
+@app.route('/reset/', methods = ['GET'])
+def resetServer():
+    #LOAD ALL CONFIGS from smb.conf
+    app.SambaManager.loadConfigs()
+
+    for host in app.SambaManager.Hosts:
+        app.SambaManager.removeHost(host.get('name'))
+
+
+    app.SambaManager.pushIntoConf()
+
+    SMB.restartSMBD()
+
+    return allowCors(jsonify({"msg": "Sucessful"}))
 
 
 
 
 
 
+#From TempServer
+
+@app.route('/file/upload/', methods = ['GET', 'POST'])
+@jwt_required
+def uploadFile():
+    files = request.files
+    req = request.args
+
+    token = req.get("token")
+    tokenData = decode_token(token)
+
+    tokenIdentity = tokenData.get("identity")
+
+    if tokenIdentity.get("username") != get_jwt_identity():
+        return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
+
+    if isValidPath(req):
+        files['file'].save(path.join(req.get('path'), files['file'].filename))
+        return allowCors(jsonify({"msg":"Success"}))
+    else:
+        return allowCors(jsonify({"msg": "Invalid Path"}), 400)
 
 
+@app.route("/testRoute/", methods = ["GET", "POST"])
+def heelo():
+    req = request.args
+
+    mainToken = decode_token(req.get("m_token"))
+    token = req.get("token")
+
+    tokenData = decode_token(token)
+
+    tokenIdentity = tokenData.get("identity")
+
+    if tokenIdentity.get("username") != mainToken.get("identity"):
+        return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
 
 
-#sudo systemctl daemon-reload
+    if isValidPath({"path": safe_join(req.get('path'), req.get('file_name'))}, False):
+        return send_from_directory(Path(req.get('path')), filename = req.get('file_name'), as_attachment=True)
+    else:
+        return allowCors(jsonify({"msg" : "Invalid Path"}), 400)
+
+
+@app.route("/dir/", methods = ['GET'])
+@jwt_required
+def getFolder():
+    req = request.args
+
+    token = req.get("token")
+    tokenData = decode_token(token)
+
+    tokenIdentity = tokenData.get("identity")
+
+    if tokenIdentity.get("username") != get_jwt_identity():
+        return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
+
+    path = req.get('path')
+
+    if path:
+        path = path.strip()
+
+    if path == None or path == '':
+        return allowCors(jsonify({"path":None, "data":[]}))
+
+    if not Path(path).exists():
+        return allowCors(jsonify({"path":None, "data":[]}))
+
+    data = Directories.getDirData(req.get('path'))
+
+    return allowCors(jsonify(data))
+
 
 
 

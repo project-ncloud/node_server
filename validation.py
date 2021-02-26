@@ -2,6 +2,7 @@ import subprocess
 from functools import wraps
 from middleWare import allowCors
 from flask import request, jsonify
+import pathlib
 
 
 def addressCorrect(func):
@@ -50,6 +51,16 @@ def testtwo(func):
 @testtwo
 def f():
     return 'world'
+
+
+
+def isValidPath(req, onlyDir = True):
+    is_technically_valid = pathlib.Path(req.get('path')).exists() and (onlyDir or pathlib.Path(req.get('path')).is_file())
+
+    if not is_technically_valid : 
+        return False
+
+    return True
 
 
 
