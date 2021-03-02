@@ -54,7 +54,11 @@ def f():
 
 
 
-def isValidPath(req, onlyDir = True):
+def isValidPath(req, host_path:str, onlyDir = True):
+    path:str = req.get("path")
+    if path.find(host_path) != 0:
+        return False
+
     is_technically_valid = pathlib.Path(req.get('path')).exists() and (onlyDir or pathlib.Path(req.get('path')).is_file())
 
     if not is_technically_valid : 

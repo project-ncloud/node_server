@@ -2,11 +2,13 @@ import dotenv
 import os
 import json
 import pathlib
+import platform
+import logging
 
 from flask                  import Flask, jsonify, request, send_file, send_from_directory, safe_join, abort
 from flask_cors             import CORS, cross_origin
 from samba.smb              import SMB
-from serviceHandler         import isAlive, wake, kill, getCurrentUser
+from serviceHandler         import isAlive, wake, kill, getCurrentUser, changeOwner
 from middleWare             import allowCors
 from validation             import addressCorrect, isValidPath
 from dotenv                 import load_dotenv
@@ -29,8 +31,10 @@ CORS(app)
 app.config['JWT_SECRET_KEY'] = getenv('SECRET_KEY')
 jwt = JWTManager(app)
 
-app.SambaManager = SMB('/etc/samba/smb.conf')
+app.SambaManager = SMB("/etc/samba/smb.conf")
 
+log = logging.getLogger("werkzeug")
+log.setLevel(logging.ERROR)
 
 #import routes.mainRoutes
 #DB = db.Mongo(os.getenv('DB_URI_STRING'),os.getenv('DB_NAME'))
@@ -319,12 +323,26 @@ def uploadFile():
     tokenData = decode_token(token)
 
     tokenIdentity = tokenData.get("identity")
+    payload = tokenData.get("user_claims")
 
     if tokenIdentity.get("username") != get_jwt_identity():
         return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
 
-    if isValidPath(req):
+    #LOAD ALL CONFIGS from smb.conf
+    app.SambaManager.loadConfigs()
+
+    host = app.SambaManager.getHost(payload.get("host_name"))
+
+    if host == None:
+        return allowCors(jsonify({"msg":"Token Host is not same as requested host."}))
+
+    if host.get("writable") == False:
+        return allowCors(jsonify({"msg":"You dont have write permission."}))
+
+
+    if isValidPath(req, host.get("path")):
         files['file'].save(path.join(req.get('path'), files['file'].filename))
+        changeOwner(path.join(req.get('path'), files['file'].filename))
         return allowCors(jsonify({"msg":"Success"}))
     else:
         return allowCors(jsonify({"msg": "Invalid Path"}), 400)
@@ -345,7 +363,18 @@ def heelo():
         return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
 
 
-    if isValidPath({"path": safe_join(req.get('path'), req.get('file_name'))}, False):
+    payload = tokenData.get("user_claims")
+
+    #LOAD ALL CONFIGS from smb.conf
+    app.SambaManager.loadConfigs()
+
+    host = app.SambaManager.getHost(payload.get("host_name"))
+
+    if host == None:
+        return allowCors(jsonify({"msg":"Token Host is not same as requested host."}))
+
+
+    if isValidPath({"path": safe_join(req.get('path'), req.get('file_name'))}, host.get("path"), False):
         return send_from_directory(Path(req.get('path')), filename = req.get('file_name'), as_attachment=True)
     else:
         return allowCors(jsonify({"msg" : "Invalid Path"}), 400)
@@ -379,6 +408,127 @@ def getFolder():
 
     return allowCors(jsonify(data))
 
+
+
+@app.route("/dir/create/", methods = ["POST"])
+@jwt_required
+def createFolder():
+    req = request.json
+
+    token = req.get("token")
+
+    tokenData = decode_token(token)
+
+    tokenIdentity = tokenData.get("identity")
+
+    if tokenIdentity.get("username") != get_jwt_identity():
+        return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
+
+
+    payload = tokenData.get("user_claims")
+
+    #LOAD ALL CONFIGS from smb.conf
+    app.SambaManager.loadConfigs()
+
+    host = app.SambaManager.getHost(payload.get("host_name"))
+
+    if host == None:
+        return allowCors(jsonify({"msg":"Token Host is not same as requested host."}), 400)
+
+    if host.get("writable") == False and not payload.get("writable"):
+        return allowCors(jsonify({"msg":"You dont have write permission."}), 400)
+
+    if isValidPath({"path": req.get('path')}, host.get("path")):
+        fullPath = safe_join(req.get('path'), req.get('folder_name'))
+        exit_code = os.system(f'mkdir -p \"{fullPath}\"') if platform.system() != 'Windows' else os.system(f'mkdir \"{fullPath}\"')
+
+        if exit_code == 0 and changeOwner(fullPath):
+            return allowCors(jsonify({"msg":"Folder Created"}))
+        else:
+            return allowCors(jsonify({"msg" : f'Error ocurred with exit {exit_code}'}), 400)
+    else:
+        return allowCors(jsonify({"msg":"Invalid Path"}), 400)
+
+
+
+@app.route("/dir/remove/", methods = ["DELETE"])
+@jwt_required
+def removeDir():
+    req = request.json
+
+    token = req.get("token")
+
+    tokenData = decode_token(token)
+
+    tokenIdentity = tokenData.get("identity")
+
+    if tokenIdentity.get("username") != get_jwt_identity():
+        return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
+
+
+    payload = tokenData.get("user_claims")
+
+    #LOAD ALL CONFIGS from smb.conf
+    app.SambaManager.loadConfigs()
+
+    host = app.SambaManager.getHost(payload.get("host_name"))
+
+    if host == None:
+        return allowCors(jsonify({"msg":"Token Host is not same as requested host."}), 400)
+
+    if host.get("writable") == False and not payload.get("writable"):
+        return allowCors(jsonify({"msg":"You dont have write permission."}), 400)
+
+    if isValidPath({"path": req.get('path')}, host.get("path")):
+        fullPath = safe_join(req.get('path'), req.get('folder_name'))
+        exit_code = os.system(f'rmdir /s \"{fullPath}\"') if platform.system() != 'Windows' else os.system(f'rm -rf \"{fullPath}\"')
+
+        if exit_code == 0 and changeOwner(fullPath):
+            return allowCors(jsonify({"msg":"Folder Removed"}))
+        else:
+            return allowCors(jsonify({"msg" : f'Error ocurred with exit {exit_code}'}), 400)
+    else:
+        return allowCors(jsonify({"msg":"Invalid Path"}), 400)
+
+
+@app.route("/file/remove/", methods = ["DELETE"])
+@jwt_required
+def removeFile():
+    req = request.json
+
+    token = req.get("token")
+
+    tokenData = decode_token(token)
+
+    tokenIdentity = tokenData.get("identity")
+
+    if tokenIdentity.get("username") != get_jwt_identity():
+        return allowCors(jsonify({"msg" : "Corrupted user"}), 400)
+
+
+    payload = tokenData.get("user_claims")
+
+    #LOAD ALL CONFIGS from smb.conf
+    app.SambaManager.loadConfigs()
+
+    host = app.SambaManager.getHost(payload.get("host_name"))
+
+    if host == None:
+        return allowCors(jsonify({"msg":"Token Host is not same as requested host."}), 400)
+
+    if host.get("writable") == False and not payload.get("writable"):
+        return allowCors(jsonify({"msg":"You dont have write permission."}), 400)
+
+    if isValidPath({"path": req.get('path')}, host.get("path")):
+        fullPath = safe_join(req.get('path'), req.get('file_name'))
+        exit_code = os.system(f'del /f \"{fullPath}\"') if platform.system() != 'Windows' else os.system(f'rm -rf \"{fullPath}\"')
+
+        if exit_code == 0 and changeOwner(fullPath):
+            return allowCors(jsonify({"msg":"File Removed"}))
+        else:
+            return allowCors(jsonify({"msg" : f'Error ocurred with exit {exit_code}'}), 400)
+    else:
+        return allowCors(jsonify({"msg":"Invalid Path"}), 400)
 
 
 
