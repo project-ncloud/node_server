@@ -4,6 +4,7 @@ import json
 import pathlib
 import platform
 import logging
+import psutil
 
 from flask                  import Flask, jsonify, request, send_file, send_from_directory, safe_join, abort
 from flask_cors             import CORS, cross_origin
@@ -31,7 +32,7 @@ CORS(app)
 app.config['JWT_SECRET_KEY'] = getenv('SECRET_KEY')
 jwt = JWTManager(app)
 
-app.SambaManager = SMB("/etc/samba/smb.conf")
+app.SambaManager = SMB("etc/samba/smb.conf")
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
@@ -276,18 +277,36 @@ def hostConfigOps():
     if ret == False:
         return allowCors(jsonify({"msg":"Requested Host not found."}), 404)
 
-    
-            
-            
+         
     app.SambaManager.forceUser(getCurrentUser())
 
     app.SambaManager.pushIntoConf()
 
     SMB.reloadSMBD()
 
-
-
     return allowCors(jsonify({"msg": f'Successfully updated the host'}))
+
+
+@app.route('/host/info/', methods = ['GET'])
+def getSizeOfHost():
+    resBlock = {
+        "total": 0,
+        "used": 0,
+        "status": False
+    }
+
+    req = request.json
+    host_path = req.get('path')
+
+    if host_path != None and Path(host_path).exists() and Path(host_path).is_dir():
+        hdd = psutil.disk_usage(host_path)
+        resBlock['total'] = hdd.total
+        resBlock['used'] = hdd.used
+        resBlock['status'] = True
+        return allowCors(jsonify(resBlock))
+    else:
+        return allowCors(jsonify(resBlock), 400)
+    
 
 
 
