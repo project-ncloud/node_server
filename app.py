@@ -32,7 +32,7 @@ CORS(app)
 app.config['JWT_SECRET_KEY'] = getenv('SECRET_KEY')
 jwt = JWTManager(app)
 
-app.SambaManager = SMB("etc/samba/smb.conf")
+app.SambaManager = SMB(getenv('CONFIG_FILE'))
 
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
