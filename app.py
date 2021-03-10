@@ -577,9 +577,11 @@ if __name__ == '__main__':
     SMB.addUser(os.getenv('ADMIN_USER'))
     SMB.add_SMBUser(os.getenv('ADMIN_USER'), os.getenv('ADMIN_KEY'))
 
-    
     app.run(host = '0.0.0.0', port = 7000, debug = True)
 
     
 def create_app():
+    load_dotenv('.env')
+    SMB.addUser(os.getenv('ADMIN_USER'))
+    SMB.add_SMBUser(os.getenv('ADMIN_USER'), os.getenv('ADMIN_KEY'))
     return app
